@@ -23,8 +23,7 @@ import datetime
 import requests
 import re
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.0-flash"  # free tier, fast, more than good enough for tweets
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # ---- Topic bank (rotates weekly, 26+ weeks of unique material) ----
 
@@ -246,37 +245,33 @@ def build_prompt(kind, topic):
         return "Write a short, genuine X (Twitter) post about AI engineering." + SUFFIX
 
 
-def call_gemini(prompt, retries=2):
-    """
-    Call Google Gemini API (free tier).
-    Endpoint: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-    """
-    if not GEMINI_API_KEY:
-        print("ERROR: GEMINI_API_KEY secret is not set in GitHub Actions.")
-        print("Get a free key at https://aistudio.google.com/apikey — no credit card needed.")
+def call_anthropic(prompt, retries=2):
+    if not ANTHROPIC_API_KEY:
+        print("ERROR: ANTHROPIC_API_KEY secret is not set in GitHub Actions.")
         sys.exit(1)
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": 150,
-            "temperature": 0.85,
-        },
-    }
-
     for attempt in range(1, retries + 2):
-        resp = requests.post(url, json=payload, timeout=60)
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
         if resp.status_code == 200:
             return resp
-        print(f"Attempt {attempt}: Gemini API returned {resp.status_code}")
+        print(f"Attempt {attempt}: Anthropic API returned {resp.status_code}")
         print(f"Response body: {resp.text}")
-        if resp.status_code == 429:
+        if resp.status_code in (429, 529):
             import time
-            time.sleep(20 * attempt)
+            time.sleep(15 * attempt)
         elif resp.status_code >= 500:
             import time
             time.sleep(5 * attempt)
@@ -285,12 +280,11 @@ def call_gemini(prompt, retries=2):
 
     resp.raise_for_status()
 
-
 def generate_tweet(kind, topic):
     prompt = build_prompt(kind, topic)
     print(f"Prompt ({len(prompt)} chars): {prompt[:120]}...")
 
-    resp = call_gemini(prompt)
+    resp = call_anthropic(prompt)
     data = resp.json()
 
     try:
