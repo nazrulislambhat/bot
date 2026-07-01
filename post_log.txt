@@ -1,0 +1,2 @@
+# Post log — one entry per tweet posted
+# Format: DATE | pillar | tweet_id | tweet_text
