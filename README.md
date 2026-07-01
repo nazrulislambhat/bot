@@ -1,3 +1,6 @@
+[![Daily X Auto-Post (Autonomous)](https://github.com/nazrulislambhat/bot/actions/workflows/autonomous_daily.yml/badge.svg)](https://github.com/nazrulislambhat/bot/actions/workflows/autonomous_daily.yml)
+
+
 # How to Go Live — Step by Step
 ## Autonomous X Auto-Poster on GitHub Actions
 
