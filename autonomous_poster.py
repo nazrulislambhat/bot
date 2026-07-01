@@ -24,7 +24,7 @@ import requests
 import re
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-1.5-flash"  # free tier, fast, more than good enough for tweets
+GEMINI_MODEL = "gemini-2.0-flash"  # free tier, fast, more than good enough for tweets
 
 # ---- Topic bank (rotates weekly, 26+ weeks of unique material) ----
 
