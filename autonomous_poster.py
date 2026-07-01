@@ -4,14 +4,13 @@ Fully Autonomous X Auto-Poster
 Runs on a schedule (GitHub Actions). Each run:
   1. Deterministically picks today's content pillar + topic (rotates through a
      curated AI/SWE topic bank so it doesn't repeat for 180 days).
-  2. Calls Claude (Anthropic API) to write the actual tweet text for that topic.
+  2. Calls Google Gemini API (FREE tier — no credit card needed) to generate tweet.
   3. Posts it to X via the X API v2.
 
-No human review step by design. See README_AUTONOMOUS.md for the tradeoffs
-of running it this way and how to add a review step later if you want one.
+No human review step by design.
 
 ENV VARS REQUIRED (set as GitHub Actions secrets):
-  ANTHROPIC_API_KEY   - for content generation
+  GEMINI_API_KEY   - free from https://aistudio.google.com/apikey (no credit card)
   X_API_KEY
   X_API_SECRET
   X_ACCESS_TOKEN
@@ -24,8 +23,8 @@ import datetime
 import requests
 import re
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-MODEL = "claude-sonnet-4-6"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-1.5-flash"  # free tier, fast, more than good enough for tweets
 
 # ---- Topic bank (rotates weekly, 26+ weeks of unique material) ----
 
@@ -247,41 +246,41 @@ def build_prompt(kind, topic):
         return "Write a short, genuine X (Twitter) post about AI engineering." + SUFFIX
 
 
-def call_anthropic(prompt, retries=2):
-    """Call the Anthropic API with retry on transient errors."""
-    if not ANTHROPIC_API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY secret is not set in GitHub Actions.")
+def call_gemini(prompt, retries=2):
+    """
+    Call Google Gemini API (free tier).
+    Endpoint: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    """
+    if not GEMINI_API_KEY:
+        print("ERROR: GEMINI_API_KEY secret is not set in GitHub Actions.")
+        print("Get a free key at https://aistudio.google.com/apikey — no credit card needed.")
         sys.exit(1)
 
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": 150,
+            "temperature": 0.85,
+        },
+    }
+
     for attempt in range(1, retries + 2):
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "max_tokens": 300,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
+        resp = requests.post(url, json=payload, timeout=60)
         if resp.status_code == 200:
             return resp
-        # Log the actual error body so it's visible in GitHub Actions logs
-        print(f"Attempt {attempt}: Anthropic API returned {resp.status_code}")
+        print(f"Attempt {attempt}: Gemini API returned {resp.status_code}")
         print(f"Response body: {resp.text}")
-        if resp.status_code in (429, 529):
-            # Rate limited — wait and retry
+        if resp.status_code == 429:
             import time
-            time.sleep(15 * attempt)
+            time.sleep(20 * attempt)
         elif resp.status_code >= 500:
             import time
             time.sleep(5 * attempt)
         else:
-            # 4xx that isn't rate-limit: retrying won't help, exit now
             resp.raise_for_status()
 
     resp.raise_for_status()
@@ -291,13 +290,15 @@ def generate_tweet(kind, topic):
     prompt = build_prompt(kind, topic)
     print(f"Prompt ({len(prompt)} chars): {prompt[:120]}...")
 
-    resp = call_anthropic(prompt)
+    resp = call_gemini(prompt)
     data = resp.json()
-    text = "".join(
-        block.get("text", "")
-        for block in data.get("content", [])
-        if block.get("type") == "text"
-    ).strip()
+
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError) as e:
+        print(f"ERROR: unexpected Gemini response structure: {data}")
+        raise RuntimeError("Could not parse Gemini response") from e
+
     # Strip any wrapping quotes the model might add
     text = text.strip('"').strip("'").strip()
     return text
