@@ -173,48 +173,133 @@ def pick_topic(today):
             return "recap", BUILD_LOG[week % len(BUILD_LOG)]
 
 
-PROMPT_TEMPLATES = {
-    "build_log": "Write a single X (Twitter) post for an AI & software engineering builder account. The author is building {topic} this week. Tone: genuine, first-person, specific, not hypey. End with a question that invites replies. Keep it under 260 characters total INCLUDING exactly one relevant, niche hashtag at the very end (not a generic one like #AI). No emojis. No markdown.",
-    "lesson": "Write a single X (Twitter) post for an AI & software engineering account, telling a short, concrete lesson: the problem was '{topic0}', and the real cause/fix was '{topic1}'. First-person, specific, a little vulnerable/honest, not preachy. End with a one-line takeaway. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "hottake": "Write a single X (Twitter) post stating this opinion in the author's own words, sharpened for engagement but still fair and defensible: '{topic}'. First-person, confident, invites disagreement in replies. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "engagement": "Write a single X (Twitter) post that's a genuine, specific discussion-starter question for AI/software engineers about challenges related to building {topic}. Should invite real replies, not be generic. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "build_log_friday": "Write a short, specific weekly recap X (Twitter) post for an AI builder account, recapping progress on building {topic} this week. Include a concrete-sounding 'biggest win', 'biggest blocker', and 'next step' (invent plausible specific details, written as if real). End by inviting feedback. Under 270 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "thread_starter": "Write tweet 1 of an X (Twitter) thread on the topic: '{topic}'. It should hook the reader hard (curiosity or a bold specific claim) and clearly promise depth, ending with '(1/)'. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "data": "Write a single X (Twitter) post sharing a 'real numbers' update for the metric: '{topic}'. Invent plausible specific before/after numbers and a one-sentence reason why they changed, written confidently as real data. First-person, specific. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "career": "Write a single X (Twitter) post sharing this career insight for AI/software engineers, in the author's own words: '{topic}'. First-person, direct, useful, not generic motivational fluff. Under 260 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-    "recap": "Write a single X (Twitter) monthly-recap-style post for an AI builder account about lessons learned building {topic} over the past few weeks. Invent one plausible specific honest takeaway and one plausible specific change for next month. End inviting suggestions. Under 270 characters INCLUDING exactly one relevant niche hashtag at the end. No emojis. No markdown.",
-}
+SUFFIX = (
+    " Under 260 characters total INCLUDING exactly one relevant niche hashtag "
+    "at the very end (e.g. #MLEngineering #LLMOps #AIEngineering — not generic #AI). "
+    "Output ONLY the tweet text. No quotes around it. No markdown. No emojis."
+)
+
+
+def build_prompt(kind, topic):
+    """Build prompt using string concatenation — avoids .format() breaking on
+    apostrophes, curly braces, or other special characters in topic strings."""
+    if kind == "build_log":
+        return (
+            "Write a single X (Twitter) post for an AI & software engineering builder. "
+            "The author is currently building: " + topic + ". "
+            "Tone: genuine, first-person, specific, not hypey. "
+            "End with a short question that invites replies." + SUFFIX
+        )
+    elif kind == "lesson":
+        pain, fix = topic  # topic is a tuple for lessons
+        return (
+            "Write a single X (Twitter) post sharing a concrete engineering lesson. "
+            "The problem encountered: " + pain + ". "
+            "The real cause or fix: " + fix + ". "
+            "First-person, specific, a little vulnerable. End with a one-line takeaway." + SUFFIX
+        )
+    elif kind == "hottake":
+        return (
+            "Write a single X (Twitter) post expressing this opinion in the author's own words, "
+            "sharpened for engagement but still fair and defensible: " + topic + " "
+            "First-person, confident. Should invite disagreement in replies." + SUFFIX
+        )
+    elif kind == "engagement":
+        return (
+            "Write a single X (Twitter) post that is a genuine, specific discussion-starter "
+            "question for AI and software engineers. Topic area: " + topic + ". "
+            "Must invite real replies, not be generic." + SUFFIX
+        )
+    elif kind == "build_log_friday":
+        return (
+            "Write a short weekly recap X (Twitter) post for an AI builder account. "
+            "Project this week: " + topic + ". "
+            "Include a concrete-sounding biggest win, biggest blocker, and next step "
+            "(invent plausible specific details as if real). End by inviting feedback." + SUFFIX
+        )
+    elif kind == "thread_starter":
+        return (
+            "Write tweet 1 of an X (Twitter) thread. Topic: " + topic + ". "
+            "Hook the reader with a bold specific claim or surprising fact, "
+            "promise depth, end with (1/)." + SUFFIX
+        )
+    elif kind == "data":
+        return (
+            "Write a single X (Twitter) post sharing real before/after numbers for this metric: "
+            + topic + ". "
+            "Invent plausible specific numbers and a one-sentence reason why they changed. "
+            "First-person, confident, written as real data." + SUFFIX
+        )
+    elif kind == "career":
+        return (
+            "Write a single X (Twitter) post sharing this career insight for AI/software engineers: "
+            + topic + " "
+            "First-person, direct, useful. Not generic motivational content." + SUFFIX
+        )
+    elif kind == "recap":
+        return (
+            "Write a monthly-recap X (Twitter) post for an AI builder. "
+            "Project: " + topic + ". "
+            "Invent one honest specific takeaway and one specific change for next month. "
+            "End inviting suggestions." + SUFFIX
+        )
+    else:
+        return "Write a short, genuine X (Twitter) post about AI engineering." + SUFFIX
+
+
+def call_anthropic(prompt, retries=2):
+    """Call the Anthropic API with retry on transient errors."""
+    if not ANTHROPIC_API_KEY:
+        print("ERROR: ANTHROPIC_API_KEY secret is not set in GitHub Actions.")
+        sys.exit(1)
+
+    for attempt in range(1, retries + 2):
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": MODEL,
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            return resp
+        # Log the actual error body so it's visible in GitHub Actions logs
+        print(f"Attempt {attempt}: Anthropic API returned {resp.status_code}")
+        print(f"Response body: {resp.text}")
+        if resp.status_code in (429, 529):
+            # Rate limited — wait and retry
+            import time
+            time.sleep(15 * attempt)
+        elif resp.status_code >= 500:
+            import time
+            time.sleep(5 * attempt)
+        else:
+            # 4xx that isn't rate-limit: retrying won't help, exit now
+            resp.raise_for_status()
+
+    resp.raise_for_status()
 
 
 def generate_tweet(kind, topic):
-    template = PROMPT_TEMPLATES[kind]
-    if kind == "lesson":
-        prompt = template.format(topic0=topic[0], topic1=topic[1])
-    else:
-        prompt = template.format(topic=topic)
+    prompt = build_prompt(kind, topic)
+    print(f"Prompt ({len(prompt)} chars): {prompt[:120]}...")
 
-    if not ANTHROPIC_API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY not set.")
-        sys.exit(1)
-
-    resp = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "max_tokens": 300,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
+    resp = call_anthropic(prompt)
     data = resp.json()
-    text = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
-    text = text.strip('"').strip()
+    text = "".join(
+        block.get("text", "")
+        for block in data.get("content", [])
+        if block.get("type") == "text"
+    ).strip()
+    # Strip any wrapping quotes the model might add
+    text = text.strip('"').strip("'").strip()
     return text
 
 
